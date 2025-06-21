@@ -1,10 +1,20 @@
 // app/(tabs)/index.tsx
-import React, { useEffect, useRef, useState } from 'react';
-import { Text, TextInput, TouchableOpacity, View, StyleSheet, Dimensions } from 'react-native';
-import { Camera } from 'expo-camera';
-import * as Permissions from 'expo-permissions';
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+  StyleSheet,
+  Dimensions,
+  KeyboardAvoidingView,
+  Platform,
+  Alert,
+  Animated,
+} from 'react-native';
 import { useKeepAwake } from 'expo-keep-awake';
 import * as Haptics from 'expo-haptics';
+import { Audio } from 'expo-av';
 
 const morseMap: Record<string, string> = {
   a: '.-', b: '-...', c: '-.-.', d: '-..', e: '.', f: '..-.',
@@ -22,59 +32,106 @@ const toMorse = (text: string) =>
 
 export default function HomeScreen() {
   const [text, setText] = useState('');
-  const [permission, requestPermission] = useCameraPermissions();
-  const cameraRef = useRef<CameraComponentType | null>(null);
+  const [isBeeping, setIsBeeping] = useState(false);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
 
-  useKeepAwake(); // Keep the screen on
+  useKeepAwake();
 
   useEffect(() => {
-    if (!permission?.granted) {
-      requestPermission();
+    if (isBeeping) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.4,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+    } else {
+      pulseAnim.stopAnimation();
+      pulseAnim.setValue(1);
     }
-  }, [permission]);
+  }, [isBeeping]);
 
   const wait = (ms: number) => new Promise(res => setTimeout(res, ms));
 
   const flashMorse = async () => {
-    if (!cameraRef.current) return;
-
     const morse = toMorse(text);
-    for (const char of morse) {
-      if (char === '.') {
-        await cameraRef.current.setTorchModeAsync('on');
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        await wait(100);
-      } else if (char === '-') {
-        await cameraRef.current.setTorchModeAsync('on');
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        await wait(300);
-      } else {
-        await wait(300); // Space or pause
+
+    if (!morse || morse.trim() === '') {
+      Alert.alert('No message', 'Please enter text to play as Morse code.');
+      return;
+    }
+
+    try {
+      const { sound } = await Audio.Sound.createAsync(
+        require('../../assets/beep.wav')
+      );
+
+      for (const char of morse) {
+        if (char === '.' || char === '-') {
+          setIsBeeping(true);
+          await sound.replayAsync();
+          await Haptics.impactAsync(
+            char === '.' ? Haptics.ImpactFeedbackStyle.Light : Haptics.ImpactFeedbackStyle.Medium
+          );
+          await wait(char === '.' ? 150 : 400);
+          setIsBeeping(false);
+        } else {
+          setIsBeeping(false);
+          await wait(300); // pause between characters/words
+        }
+        await wait(150); // inter-beep spacing
       }
-      await cameraRef.current.setTorchModeAsync('off');
-      await wait(150);
+
+      await sound.unloadAsync();
+    } catch (err) {
+      console.error('Playback error:', err);
+      Alert.alert('Sound error', 'Failed to play beep.wav');
+      setIsBeeping(false);
     }
   };
 
   return (
-    <View style={styles.container}>
-      <Camera style={styles.hiddenCamera} ref={cameraRef} />
+  <KeyboardAvoidingView
+    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    style={styles.container}
+  >
+    <Text style={styles.title}>c-morse</Text>
 
-      <TextInput
-        style={styles.input}
-        placeholder="Type your message..."
-        placeholderTextColor="#888"
-        value={text}
-        onChangeText={setText}
+    {isBeeping ? (
+      <Animated.View
+        style={[
+          styles.circleOverlay,
+          { transform: [{ scale: pulseAnim }] },
+        ]}
       />
+    ) : (
+      <>
+        <TextInput
+          style={styles.input}
+          placeholder="Type your message..."
+          placeholderTextColor="#888"
+          value={text}
+          onChangeText={setText}
+        />
 
-      <Text style={styles.morse}>{toMorse(text)}</Text>
+        <Text style={styles.morse}>{toMorse(text)}</Text>
 
-      <TouchableOpacity style={styles.button} onPress={flashMorse}>
-        <Text style={styles.buttonText}>Play Morse</Text>
-      </TouchableOpacity>
-    </View>
-  );
+        <TouchableOpacity style={styles.button} onPress={flashMorse}>
+          <Text style={styles.buttonText}>Play Morse</Text>
+        </TouchableOpacity>
+      </>
+    )}
+  </KeyboardAvoidingView>
+);
+
 }
 
 const { width } = Dimensions.get('window');
@@ -82,44 +139,57 @@ const { width } = Dimensions.get('window');
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: '#ececec',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
   },
-  hiddenCamera: {
-    width: 1,
-    height: 1,
-    position: 'absolute',
-    top: -1000,
-  },
   input: {
     fontSize: 20,
-    color: '#fff',
-    borderBottomColor: '#444',
+    color: '#111',
+    borderBottomColor: '#aaa',
     borderBottomWidth: 1,
     marginBottom: 20,
     width: width - 48,
     fontFamily: 'monospace',
+    backgroundColor: '#eee',
+    padding: 10,
+    borderRadius: 6,
   },
   morse: {
-    color: '#0f0',
+    color: '#222',
     fontSize: 24,
     fontFamily: 'monospace',
     marginBottom: 40,
     textAlign: 'center',
   },
   button: {
-    backgroundColor: '#111',
-    borderColor: '#0f0',
+    backgroundColor: '#222',
+    borderColor: '#333',
     borderWidth: 1,
     paddingVertical: 12,
     paddingHorizontal: 24,
     borderRadius: 8,
   },
   buttonText: {
-    color: '#0f0',
+    color: '#eee',
     fontFamily: 'monospace',
     fontSize: 16,
   },
+  circleOverlay: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: '#222',
+    position: 'absolute',
+    top: '45%',
+  },
+  title: {
+  fontSize: 28,
+  fontFamily: 'monospace',
+  color: '#111',
+  top:0,
+  textAlign: 'center',
+
+},
 });
