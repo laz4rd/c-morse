@@ -497,6 +497,6 @@ const styles = StyleSheet.create({
     top: '50%',
     left: '50%',
     marginTop: -60,  // Half of height to center vertically
-    marginLeft: -45, // Half of width to center horizontally
+    marginLeft: -40, // Half of width to center horizontally
   },
 });
